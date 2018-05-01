@@ -31,7 +31,7 @@ typedef struct JpegImage {
     int height, width;
     int subsampling[N_COMPONENTS][2];
     int q_table_id[N_COMPONENTS]; 
-    unordered_map <int, int> huffman_tables[N_TYPES][N_DECODE_TREES]; 
+    unordered_map<int, int> huffman_tables[N_TYPES][N_DECODE_TREES];
 } JpegImage;
 
 void readBytes(FILE* fp, auto* buffer, size_t n) {
@@ -145,6 +145,7 @@ void readDHT(FILE* fp, JpegImage* ptr) {
     int length, bytes_left;
     int type, table_id;
     int num_leaves[MAX_CODE_LENGTH] = {0}, max_length = 0;
+    int code;
     readBytes(fp, buffer, 2);
     length = ConcatBytes(buffer[0], buffer[1]);
     printf("%d\n", length);
@@ -167,7 +168,8 @@ void readDHT(FILE* fp, JpegImage* ptr) {
             if (num_leaves[i] > 0)
                 max_length = i + 1;
         }
-        for (int len = 1, code = 0; len <= max_length; len++) {
+        code = 0;
+        for (int len = 1; len <= max_length; len++) {
             for (int i = 0; i < num_leaves[len - 1]; i++) {
                 readBytes(fp, buffer, 1);
                 printf("code=%x, weights=%d\n", code, (int)buffer[0]);
@@ -182,7 +184,7 @@ void readDHT(FILE* fp, JpegImage* ptr) {
 }
 
 JpegImage* ReadJpeg(FILE* fp) {
-    JpegImage* ImagePtr = (JpegImage*)malloc(sizeof(JpegImage));
+    JpegImage* ImagePtr = new JpegImage;
     unsigned char buffer[2];
     int mcu_start = 0;
     // SOI
