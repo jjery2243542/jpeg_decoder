@@ -161,6 +161,7 @@ void readDHT(FILE* fp, JpegImage* ptr) {
         table_id = buffer[0] & 0xf;
         if (table_id >= N_DECODE_TREES)
             printf("huffman table id error\n");
+        printf("type=%d, table_id=%d\n", type, table_id);
         auto& map = ptr->huffman_tables[type][table_id];
         for (int i = 0; i < MAX_CODE_LENGTH; i++) {
             num_leaves[i] = (int)buffer[i + 1];
@@ -170,15 +171,16 @@ void readDHT(FILE* fp, JpegImage* ptr) {
         }
         code = 0;
         for (int len = 1; len <= max_length; len++) {
+            printf("len=%d, num_leaves=%d\n", len, num_leaves[len - 1]);
             for (int i = 0; i < num_leaves[len - 1]; i++) {
                 readBytes(fp, buffer, 1);
-                printf("code=%x, weights=%d\n", code, (int)buffer[0]);
+                bytes_left--;
                 map[code] = (int)buffer[0];
+                printf("len=%d, code=%x, weights=%d\n", len, code, (int)buffer[0]);
                 code++;
             }
             code = code << 1;
         }
-        return;
     }
     return;
 }
@@ -210,6 +212,7 @@ JpegImage* ReadJpeg(FILE* fp) {
                 printf("fourth\n");
                 readDHT(fp, ImagePtr);
                 mcu_start = 1;
+                break;
         }
     }
     return ImagePtr;
