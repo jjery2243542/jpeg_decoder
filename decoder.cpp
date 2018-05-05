@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 #include <assert.h>
 #include <math.h>
 #include <unordered_map>
@@ -28,6 +29,22 @@ const unsigned char MarkerDHT = 0xc4;
 const unsigned char MarkerDRI = 0xdd;
 const unsigned char MarkerSOS = 0xda;
 const unsigned char MarkerEOI = 0xd9;
+
+const int zz_order[64] = {0,
+    1, 8,
+    16, 9, 2,
+    3, 10, 17, 24,
+    32, 25, 18, 11, 4,
+    5, 12, 19, 26, 33, 40,
+    48, 41, 34, 27, 20, 13, 6,
+    7, 14, 21, 28, 35, 42, 49, 56,
+    57, 50, 43, 36, 29, 22, 15,
+    23, 30, 37, 44, 51, 58,
+    59, 52, 45, 38, 31,
+    39, 46, 53, 60,
+    61, 54, 47,
+    55, 62,
+    63};
 
 typedef struct JpegImage {
     int unit;
@@ -140,7 +157,6 @@ void toZigzagOrder(int* table, auto* buffer) {
     int i = 0, j = 0, di = -1, dj = 1;
     for (int diag = 0; diag < BLOCK_SIDE + BLOCK_SIDE -1; diag++) {
         while (i >= 0 && j >= 0 && i < BLOCK_SIDE && j < BLOCK_SIDE) {
-            //printf("%d %d\n", i, j);
             table[i * BLOCK_SIDE + j] = (int)buffer[buffer_index];
             buffer_index++;
             i += di; j+= dj;
@@ -344,7 +360,7 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
         int n_zeros = 0, ac_value = 0;
         auto& huffman_table = (count == 0)? dc_table: ac_table;
         int bit = 0;
-        //printf("block index=%d\n", count);
+        //printf("block index=%d--", count);
         while (!find) {
             bit = BR.read_bit(fp);
             if (BR.is_eof()) {
@@ -363,7 +379,7 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
                 find = 1; 
             }
         }
-        //printf("weight=%d\n", weight);
+        //printf("weight=%d-----", weight);
         // AC terminate code
         if (count > 0 && weight == 0) {
             terminate = 1;
@@ -373,7 +389,9 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
         // DC 
         if (count == 0) {
             // read weight bits of data
+            //printf("weight=%d\n", weight);
             translation = translate(weight, BR, fp);
+            //printf("value=%d\n", translation);
             if (BR.is_eof()) {
                 //printf("eof detected\n");
                 return;
@@ -384,8 +402,8 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
             // high 4 bits are the running zero, low 4 bits are the value
             n_zeros = weight >> 4;
             weight = weight & 0xf;
-            //printf("AC: n_zeros=%d, weight=%d\n", n_zeros, weight);
             translation = translate(weight, BR, fp);
+            //printf("AC:%d, %d-----", n_zeros, weight);
             if (BR.is_eof()) {
                 //printf("eof detected\n");
                 return;
@@ -409,14 +427,16 @@ int readMCU(FILE* fp, JpegImage* ptr) {
     int n_cols_mcu = BLOCK_SIDE * ptr->Hmax;
     //printf("height=%d, width=%d\n", ptr->height, ptr->width);
     //printf("subsampling=%d, %d\n", ptr->Vmax, ptr->Hmax);
-    int n_mcu = (ptr->height / n_rows_mcu + 1) * (ptr->width / n_cols_mcu + 1); 
+    int n_mcu = ceil((float)ptr->height / n_rows_mcu) * ceil((float)ptr->width / n_cols_mcu); 
     //printf("n_mcu=%d\n", n_mcu);
     for (int c = 0; c < N_COMPONENTS; c++) {
         int n_tables = n_mcu * ptr->subsampling[c][0] * ptr->subsampling[c][1];
         ptr->blocks[c] = new int* [n_tables];
-        for (int t = 0; t < n_tables; t++) 
+        for (int t = 0; t < n_tables; t++) { 
             ptr->blocks[c][t] = new int [BLOCK_SIZE](); 
+        }
     }
+    int prev_dc[N_COMPONENTS] = {0};
     for (int mcu = 0; mcu < n_mcu; mcu++) {
         //printf("mcu_index=%d\n", mcu);
         for (int c = 0; c < N_COMPONENTS; c++) {
@@ -426,13 +446,16 @@ int readMCU(FILE* fp, JpegImage* ptr) {
             auto& dc_table = ptr->huffman_tables[DC][dc_table_id];
             auto& ac_table = ptr->huffman_tables[AC][ac_table_id];
             int n_tables = ptr->subsampling[c][0] * ptr->subsampling[c][1];
-            int previous_dc = 0;
-            int buffer_table[BLOCK_SIZE];
             for (int t = 0; t < n_tables; t++) {
+                int buffer_table[BLOCK_SIZE] = {0};
                 decodeMCU(fp, dc_table, ac_table, ptr, BR, buffer_table);
-                toZigzagOrder(ptr->blocks[c][mcu * n_tables + t], buffer_table);
-                ptr->blocks[c][mcu * n_tables + t][0] += previous_dc;
-                previous_dc = ptr->blocks[c][mcu * n_tables + t][0];
+                buffer_table[0] += prev_dc[c];
+                prev_dc[c] = buffer_table[0];
+                for (int i = 0; i < BLOCK_SIZE; i++)
+                    ptr->blocks[c][mcu*n_tables+t][zz_order[i]] = buffer_table[i];
+                //toZigzagOrder(ptr->blocks[c][mcu * n_tables + t], buffer_table);
+                for (int i = 0; i < 64; i++)
+                    printf("%d\n", ptr->blocks[c][mcu*n_tables+t][i]);
                 if (BR.is_eof()) {
                     //printf("eof detected\n");
                     return 1;
