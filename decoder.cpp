@@ -61,7 +61,15 @@ typedef struct JpegImage {
     int rstn;
     int h_table_id[N_TYPES][N_COMPONENTS];
     int** blocks[N_COMPONENTS];
+    int n_rows_mcu, n_cols_mcu;
 } JpegImage;
+
+typedef struct BmpImage {
+    //rgb value
+    unsigned char* pixel[N_COMPONENTS];
+    int width, height;
+    int pad_width, pad_height;
+} BmpImage;
 
 typedef struct BitReader {
     unsigned char buffer[2];
@@ -124,9 +132,6 @@ int ConcatInt(int high, int low) {
     return ((high << 16) | low);
 }
 
-//void dequantize(int* table, int* q_table) {
-//    
-//}
 
 void readAPP0(FILE* fp, JpegImage* ptr) {
     unsigned char buffer[2];
@@ -151,7 +156,12 @@ void readAPP0(FILE* fp, JpegImage* ptr) {
     fseek(fp, length - 16, SEEK_CUR);
     return;
 }
-
+void toZigzagOrder(int* table, auto* buffer) {
+    for (int i = 0; i < BLOCK_SIZE; i++)
+        table[zz_order[i]] = (int)buffer[i];
+    return;
+}
+/*
 void toZigzagOrder(int* table, auto* buffer) {
     int buffer_index = 0;
     int i = 0, j = 0, di = -1, dj = 1;
@@ -170,7 +180,6 @@ void toZigzagOrder(int* table, auto* buffer) {
     }
     return;
 }
-/*
 void Fill_Q_table(int* q_table, unsigned char* buffer) {
     int buffer_index = 0;
     int i = 0, j = 0, di = -1, dj = 1;
@@ -242,7 +251,7 @@ void readSOF(FILE* fp, JpegImage* ptr) {
             printf("frame id not matching\n");
         ptr->subsampling[i][0] = (int)(buffer[1] >> 4);
         ptr->subsampling[i][1] = (int)(buffer[1] & 0xf);
-        //printf("component=%d, subsampling=(%d, %d)\n", i, ptr->subsampling[i][0], ptr->subsampling[i][1]);
+        printf("component=%d, subsampling=(%d, %d)\n", i, ptr->subsampling[i][0], ptr->subsampling[i][1]);
         // calculate HMax and VMax
         if (ptr->subsampling[i][0] > ptr->Hmax)
             ptr->Hmax = ptr->subsampling[i][0];
@@ -423,11 +432,15 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
 int readMCU(FILE* fp, JpegImage* ptr) {
     unsigned char buffer[BLOCK_SIZE];
     BitReader BR;
-    int n_rows_mcu = BLOCK_SIDE * ptr->Vmax;
-    int n_cols_mcu = BLOCK_SIDE * ptr->Hmax;
-    //printf("height=%d, width=%d\n", ptr->height, ptr->width);
+    int row_mcu = BLOCK_SIDE * ptr->Vmax;
+    int col_mcu = BLOCK_SIDE * ptr->Hmax;
+    printf("row=%d, col=%d\n", row_mcu, col_mcu);
+    printf("height=%d, width=%d\n", ptr->height, ptr->width);
+    ptr->n_rows_mcu = ceil((float)ptr->height / row_mcu);
+    ptr->n_cols_mcu = ceil((float)ptr->width / col_mcu);
     //printf("subsampling=%d, %d\n", ptr->Vmax, ptr->Hmax);
-    int n_mcu = ceil((float)ptr->height / n_rows_mcu) * ceil((float)ptr->width / n_cols_mcu); 
+    int n_mcu = ptr->n_rows_mcu * ptr->n_cols_mcu;; 
+    printf("rows=%d, cols=%d\n", ptr->n_rows_mcu, ptr->n_cols_mcu);
     //printf("n_mcu=%d\n", n_mcu);
     for (int c = 0; c < N_COMPONENTS; c++) {
         int n_tables = n_mcu * ptr->subsampling[c][0] * ptr->subsampling[c][1];
@@ -451,11 +464,7 @@ int readMCU(FILE* fp, JpegImage* ptr) {
                 decodeMCU(fp, dc_table, ac_table, ptr, BR, buffer_table);
                 buffer_table[0] += prev_dc[c];
                 prev_dc[c] = buffer_table[0];
-                for (int i = 0; i < BLOCK_SIZE; i++)
-                    ptr->blocks[c][mcu*n_tables+t][zz_order[i]] = buffer_table[i];
-                //toZigzagOrder(ptr->blocks[c][mcu * n_tables + t], buffer_table);
-                for (int i = 0; i < 64; i++)
-                    printf("%d\n", ptr->blocks[c][mcu*n_tables+t][i]);
+                toZigzagOrder(ptr->blocks[c][mcu * n_tables + t], buffer_table);
                 if (BR.is_eof()) {
                     //printf("eof detected\n");
                     return 1;
@@ -464,6 +473,145 @@ int readMCU(FILE* fp, JpegImage* ptr) {
         }
     }
     return 0;
+}
+
+void dequantize(JpegImage* ptr) {
+    int n_mcu = ptr->n_rows_mcu * ptr->n_cols_mcu;
+    for (int c = 0; c < N_COMPONENTS; c++) {
+        int n_tables = n_mcu * ptr->subsampling[c][0] * ptr->subsampling[c][1];
+        int* q_table = ptr->q_table[ptr->q_table_id[c]]; 
+        for (int t = 0; t < n_tables; t++) {
+            for (int i = 0; i < BLOCK_SIZE; i++) {
+                ptr->blocks[c][t][i] *= q_table[i];
+                //printf("block[j]=%d\n", ptr->blocks[c][t][i]);
+            }
+        }
+    }
+    return;
+}
+
+inline void IDCT_block(int* block, float *cos_value) {
+	const static float c[BLOCK_SIDE] = {(0.5f / sqrt(2)), 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+	float block_f[BLOCK_SIZE];
+	for(int i = 0; i < BLOCK_SIZE; i++) {
+		block_f[i] = block[i];
+	}
+
+	for(int y = 0; y < BLOCK_SIDE; y++) {
+		float value[BLOCK_SIDE] = {0.0f};
+		for(int x = 0; x < BLOCK_SIDE; x++) {
+			for(int i = 0; i < BLOCK_SIDE; i++) {
+				value[x] += c[i] * block_f[y * BLOCK_SIDE + i] * cos_value[x * BLOCK_SIDE + i];
+			}
+		}
+		for(int i = 0; i < BLOCK_SIDE; i++) {
+			block_f[y * BLOCK_SIDE + i] = value[i];
+		}
+	}
+	
+	for(int x = 0; x < BLOCK_SIDE; x++) {
+		float value[BLOCK_SIDE] = {0.0f};
+        for(int y = 0; y < BLOCK_SIDE; y++) {
+			for(int i = 0; i < BLOCK_SIDE; i++) {
+				value[y] += c[i] * block_f[x + i * BLOCK_SIDE] * cos_value[y * BLOCK_SIDE + i];
+			}
+		}
+		for(int i = 0; i < BLOCK_SIDE; i++) {
+			block_f[x + i * BLOCK_SIDE] = value[i];
+		}
+	}
+	for(int i = 0; i < BLOCK_SIZE; ++i) {
+		block[i] = roundf(block_f[i] + 128);
+        //printf("block[i]=%d\n", block[i]);
+	}
+}
+/*
+void IDCT_block(int* block, float cos_table[][BLOCK_SIDE]) {
+    float blockf[BLOCK_SIZE];
+    for (int i = 0; i < BLOCK_SIZE; i++)
+        blockf[i] = (float)block[i];
+    for (int x = 0; x < BLOCK_SIDE; x++) {
+        for (int y = 0; y < BLOCK_SIDE; y++) {
+            float sum = 0;
+            for (int u = 0; u < BLOCK_SIDE; u++) {
+                for (int v = 0; v < BLOCK_SIDE; v++) {
+                    float c = ((u == 0) && (v == 0))? 0.5: 1;
+                    sum += c * blockf[x * BLOCK_SIDE + y] * cos_table[x][u] * cos_table[y][v];
+                }
+            }
+            blockf[x * BLOCK_SIDE + y] = sum;
+        }
+    }
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+        block[i] = roundf(blockf[i] + 128);
+        printf("block[i]=%d\n", block[i]);
+    }
+    return;
+}*/
+
+void IDCT(JpegImage* ptr) {
+    // calculate cosine table
+    float cos_table[BLOCK_SIZE];
+    for (int x = 0; x < BLOCK_SIDE; x++) {
+        for (int u = 0; u < BLOCK_SIDE; u++) {
+           cos_table[x * BLOCK_SIDE + u] = cosf((2. * x + 1.) * (M_PI / 16.) * u); 
+        }
+    }
+    int n_mcu = ptr->n_rows_mcu * ptr->n_cols_mcu;
+    int n_tables[N_COMPONENTS];
+    for (int c = 0; c < N_COMPONENTS; c++)
+        n_tables[c] = ptr->subsampling[c][0] * ptr->subsampling[c][1];
+    for (int c = 0; c < N_COMPONENTS; c++) {
+        for (int mcu = 0; mcu < n_mcu; mcu++) {
+            for (int t = 0 ;t < n_tables[c]; t++) {
+                IDCT_block(ptr->blocks[c][mcu * n_tables[c] + t], cos_table); 
+            }
+        }
+    }
+    return;
+}
+
+BmpImage* convertColor(JpegImage* ptr) {
+    BmpImage* bmp = new BmpImage;
+    bmp->width = ptr->n_cols_mcu * ptr->Hmax * BLOCK_SIDE;
+    bmp->height = ptr->n_rows_mcu * ptr->Vmax * BLOCK_SIDE;
+    bmp->pad_width = bmp->width - ptr->width;
+    bmp->pad_height = bmp->height - ptr->height;
+    // allocate pixel memory
+    for (int c = 0; c < N_COMPONENTS; c++)
+        bmp->pixel[c] = new unsigned char [bmp->width * bmp->height + 1];
+    int sample_distance_h[N_COMPONENTS], sample_distance_v[N_COMPONENTS];
+
+    for (int c = 0; c < N_COMPONENTS; c++) {
+        sample_distance_h[c] = ptr->Hmax / ptr->subsampling[c][0];
+        sample_distance_v[c] = ptr->Vmax / ptr->subsampling[c][1];
+        printf("h=%d, v=%d\n", sample_distance_h[c], sample_distance_v[c]);
+    }
+    int n_tables[N_COMPONENTS] = {0};
+    // number of tables in a block
+    for (int c = 0; c < N_COMPONENTS; c++)
+        n_tables[c] = ptr->subsampling[c][0] * ptr->subsampling[c][1];
+    printf("Hmax=%d, Vmax=%d\n", ptr->Hmax, ptr->Vmax);
+    for (int i = 0; i < bmp->height; i++) {
+        for (int j = 0; j < bmp->width; j++) {
+            int YCrCb[N_COMPONENTS] = {};
+            for (int c = 0; c < N_COMPONENTS; c++) {
+                int block_h = j / (ptr->Hmax * BLOCK_SIDE);
+                int block_v = i / (ptr->Vmax * BLOCK_SIDE);
+                int block_index = block_v * ptr->n_cols_mcu + block_h;
+                int table_h = (j - block_h * ptr->Hmax * BLOCK_SIDE) / (BLOCK_SIDE * sample_distance_h[c]);
+                int table_v = (i - block_v * ptr->Vmax * BLOCK_SIDE) / (BLOCK_SIDE * sample_distance_v[c]);
+                int table_index = table_v * ptr->subsampling[c][0] + table_h;
+                int pixel_h = (j - block_h * ptr->Hmax * BLOCK_SIDE - table_h * BLOCK_SIDE) / sample_distance_h[c];
+                int pixel_v = (i - block_v * ptr->Vmax * BLOCK_SIDE - table_v * BLOCK_SIDE) / sample_distance_v[c];
+                int pixel_index = pixel_v * BLOCK_SIDE + pixel_h;
+                //printf("bp:(%d, %d)=%d %d %d %d %d %d\n", i, j, block_v, block_h, table_v, table_h, pixel_v, pixel_h);
+                YCrCb[c] = ptr->blocks[c][block_index * n_tables[c] + table_index][pixel_index];
+            }
+            printf("Y:%d, %d, %d\n", YCrCb[0], YCrCb[1], YCrCb[2]);
+        }
+    }
+    return bmp;
 }
 
 JpegImage* ReadJpeg(FILE* fp) {
@@ -517,5 +665,8 @@ int main(int argc, char** argv) {
     FILE* fp = fopen(argv[1], "rb");
     JpegImage* jpeg_ptr;
     jpeg_ptr = ReadJpeg(fp);
+    dequantize(jpeg_ptr);
+    IDCT(jpeg_ptr);
+    convertColor(jpeg_ptr);
     return 0;
 }
