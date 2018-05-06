@@ -170,7 +170,8 @@ void toZigzagOrder(int* table, auto* buffer) {
         table[zz_order[i]] = (int)buffer[i];
     return;
 }
-/*
+
+/*DEPRECATE
 void toZigzagOrder(int* table, auto* buffer) {
     int buffer_index = 0;
     int i = 0, j = 0, di = -1, dj = 1;
@@ -223,7 +224,6 @@ void readDQT(FILE* fp, JpegImage* ptr) {
         readBytes(fp, buffer, BLOCK_SIZE + 1);
         precision = (int)(buffer[0] >> 4) + 1;
         id = (int)(buffer[0] & 0x0f);
-        //printf("q_table_id=%d\n", id);
         ptr->n_q_tables = id + 1;
         toZigzagOrder(ptr->q_table[id], buffer + 1);
         //Fill_Q_table(ptr->q_table[id], buffer + 1);
@@ -238,15 +238,12 @@ void readSOF(FILE* fp, JpegImage* ptr) {
     int n_components = 0;
     readBytes(fp, buffer, 2);
     length = ConcatBytes(buffer[0], buffer[1]);
-    //printf("%d\n", length);
     readBytes(fp, buffer, 1);
     precision = (int)buffer[0];
-    //printf("%d\n", precision);
     readBytes(fp, buffer, 2);
     ptr->height = ConcatBytes(buffer[0], buffer[1]);
     readBytes(fp, buffer, 2);
     ptr->width = ConcatBytes(buffer[0], buffer[1]);
-    // printf("%d %d\n", ptr->height, ptr->width);
     // color division must be 3
     readBytes(fp, buffer, 1);
     n_components = (int)buffer[0];
@@ -260,17 +257,13 @@ void readSOF(FILE* fp, JpegImage* ptr) {
             printf("frame id not matching\n");
         ptr->subsampling[i][0] = (int)(buffer[1] >> 4);
         ptr->subsampling[i][1] = (int)(buffer[1] & 0xf);
-        printf("component=%d, subsampling=(%d, %d)\n", i, ptr->subsampling[i][0], ptr->subsampling[i][1]);
         // calculate HMax and VMax
         if (ptr->subsampling[i][0] > ptr->Hmax)
             ptr->Hmax = ptr->subsampling[i][0];
         if (ptr->subsampling[i][1] > ptr->Vmax)
             ptr->Vmax = ptr->subsampling[i][1];
         ptr->q_table_id[i] = (int)buffer[2];
-        //printf("%d %d %d\n", ptr->subsampling[i][0], ptr->subsampling[i][1], ptr->q_table_id[i]);
     }
-    //printf("Hmax=%d, Vmax=%d\n", ptr->Hmax, ptr->Vmax);
-
     return;
 }
 
@@ -282,7 +275,6 @@ void readDHT(FILE* fp, JpegImage* ptr) {
     int code;
     readBytes(fp, buffer, 2);
     length = ConcatBytes(buffer[0], buffer[1]);
-    //printf("%d\n", length);
     bytes_left = length - 2;
     while (bytes_left > 0) {
         readBytes(fp, buffer, MAX_CODE_LENGTH + 1);
@@ -295,22 +287,18 @@ void readDHT(FILE* fp, JpegImage* ptr) {
         table_id = buffer[0] & 0xf;
         if (table_id >= N_DECODE_TREES)
             printf("huffman table id error\n");
-        //printf("type=%d, table_id=%d\n", type, table_id);
         auto& map = ptr->huffman_tables[type][table_id];
         for (int i = 0; i < MAX_CODE_LENGTH; i++) {
             num_leaves[i] = (int)buffer[i + 1];
-            //printf("length=%d, num=%d\n", i + 1, num_leaves[i]);
             if (num_leaves[i] > 0)
                 max_length = i + 1;
         }
         code = 0;
         for (int len = 1; len <= max_length; len++) {
-            //printf("len=%d, num_leaves=%d\n", len, num_leaves[len - 1]);
             for (int i = 0; i < num_leaves[len - 1]; i++) {
                 readBytes(fp, buffer, 1);
                 bytes_left--;
                 map[ConcatInt(len, code)] = (int)buffer[0];
-                //printf("len=%d, code=%x, weights=%d\n", len, code, (int)buffer[0]);
                 code++;
             }
             code = code << 1;
@@ -320,7 +308,6 @@ void readDHT(FILE* fp, JpegImage* ptr) {
 }
 
 
-//bmp_write(unsigned char *image, int xsize, int ysize, char *filename) {
 void writeBMP(BmpImage* ptr, char* output_path) {
 	FILE* fp = fopen(output_path, "wb");
 	unsigned char header[54] = {
@@ -367,7 +354,6 @@ void readSOS(FILE* fp, JpegImage* ptr) {
 	int length, n_components;
 	readBytes(fp, buffer, 2);
 	length = ConcatBytes(buffer[0], buffer[1]);
-	//printf("length=%d\n", length);
 	readBytes(fp, buffer, 1);
 	n_components = (int)buffer[0];
 	if (n_components != N_COMPONENTS)
@@ -379,7 +365,6 @@ void readSOS(FILE* fp, JpegImage* ptr) {
 		ptr->h_table_id[AC][color_id] = (int)(buffer[1] & 0xf);
 	}
 	readBytes(fp, buffer, 3);
-	//printf("%x %x %x\n", buffer[0], buffer[1], buffer[2]);
 	return;
 }
 
@@ -388,19 +373,16 @@ int translate(int weight, BitReader& BR, FILE* fp) {
 	int bit = 0, is_negative = 0;
 	for (int len = 0; len < weight; len++) {
 		bit = BR.read_bit(fp);
-		//printf("bit=%d ", bit);
 		if (BR.is_eof())
 			break;
 		value = (value << 1) | bit;
 		if (len == 0)
 			is_negative = ((bit == 0)? 1 : 0); 
 	}
-	//printf("is_nagtive=%d, value=%d\n", is_negative, value);
 	if (is_negative) 
 		translation = -(value^((1 << weight) - 1));
 	else
 		translation = value;
-	//printf("translation=%d\n", translation);
 	return translation;
 }
 
@@ -412,40 +394,30 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
 		int n_zeros = 0, ac_value = 0;
 		auto& huffman_table = (count == 0)? dc_table: ac_table;
 		int bit = 0;
-		//printf("block index=%d--", count);
 		while (!find) {
 			bit = BR.read_bit(fp);
 			if (BR.is_eof()) {
-				//printf("eof detected\n");
 				return;
 			}
-			//printf("bit=%d, ", bit);
 			code = (code << 1) | bit;
 			length++;
-			//printf("length=%d, code=%x\n", length, code);
 			auto got = huffman_table.find(ConcatInt(length, code));
 			// code found
 			if (got != huffman_table.end()) {
-				//printf("gotten, code=%x\n", code);
 				weight = got->second;
 				find = 1; 
 			}
 		}
-		//printf("weight=%d-----", weight);
 		// AC terminate code
 		if (count > 0 && weight == 0) {
 			terminate = 1;
-			//printf("terminated\n");
 			break;
 		}
 		// DC 
 		if (count == 0) {
 			// read weight bits of data
-			//printf("weight=%d\n", weight);
 			translation = translate(weight, BR, fp);
-			//printf("value=%d\n", translation);
 			if (BR.is_eof()) {
-				//printf("eof detected\n");
 				return;
 			}
 			table[count] = translation;
@@ -455,18 +427,13 @@ void decodeMCU(FILE* fp, auto& dc_table, auto& ac_table, JpegImage* ptr, BitRead
 			n_zeros = weight >> 4;
 			weight = weight & 0xf;
 			translation = translate(weight, BR, fp);
-			//printf("AC:%d, %d-----", n_zeros, weight);
 			if (BR.is_eof()) {
-				//printf("eof detected\n");
 				return;
 			}
-			//printf("translation=%d\n", translation);
 			// fill in AC value
 			count += n_zeros;
 			table[count] = translation;
 			count++;
-			//if (count > BLOCK_SIZE)
-			//printf("error2, count=%d\n", count);
 		}
 	}
 	return;
@@ -477,14 +444,9 @@ int readMCU(FILE* fp, JpegImage* ptr) {
 	BitReader BR;
 	int row_mcu = BLOCK_SIDE * ptr->Vmax;
 	int col_mcu = BLOCK_SIDE * ptr->Hmax;
-	printf("row=%d, col=%d\n", row_mcu, col_mcu);
-	printf("height=%d, width=%d\n", ptr->height, ptr->width);
 	ptr->n_rows_mcu = ceil((float)ptr->height / row_mcu);
 	ptr->n_cols_mcu = ceil((float)ptr->width / col_mcu);
-	//printf("subsampling=%d, %d\n", ptr->Vmax, ptr->Hmax);
 	int n_mcu = ptr->n_rows_mcu * ptr->n_cols_mcu;; 
-	printf("rows=%d, cols=%d\n", ptr->n_rows_mcu, ptr->n_cols_mcu);
-	//printf("n_mcu=%d\n", n_mcu);
 	for (int c = 0; c < N_COMPONENTS; c++) {
 		int n_tables = n_mcu * ptr->subsampling[c][0] * ptr->subsampling[c][1];
 		ptr->blocks[c] = new int* [n_tables];
@@ -494,11 +456,9 @@ int readMCU(FILE* fp, JpegImage* ptr) {
 	}
 	int prev_dc[N_COMPONENTS] = {0};
 	for (int mcu = 0; mcu < n_mcu; mcu++) {
-		//printf("mcu_index=%d\n", mcu);
 		for (int c = 0; c < N_COMPONENTS; c++) {
 			int dc_table_id = ptr->h_table_id[DC][c];
 			int ac_table_id = ptr->h_table_id[AC][c];
-			//printf("dc_table_id=%d, ac_table_id=%d\n", dc_table_id, ac_table_id);
 			auto& dc_table = ptr->huffman_tables[DC][dc_table_id];
 			auto& ac_table = ptr->huffman_tables[AC][ac_table_id];
 			int n_tables = ptr->subsampling[c][0] * ptr->subsampling[c][1];
@@ -509,7 +469,6 @@ int readMCU(FILE* fp, JpegImage* ptr) {
 				prev_dc[c] = buffer_table[0];
 				toZigzagOrder(ptr->blocks[c][mcu * n_tables + t], buffer_table);
 				if (BR.is_eof()) {
-					//printf("eof detected\n");
 					return 1;
 				}
 			} 
@@ -526,7 +485,6 @@ void dequantize(JpegImage* ptr) {
 		for (int t = 0; t < n_tables; t++) {
 			for (int i = 0; i < BLOCK_SIZE; i++) {
 				ptr->blocks[c][t][i] *= q_table[i];
-				//printf("block[j]=%d\n", ptr->blocks[c][t][i]);
 			}
 		}
 	}
@@ -565,7 +523,6 @@ inline void IDCT_block(int* block, float *cos_value) {
 	}
 	for(int i = 0; i < BLOCK_SIZE; ++i) {
 		block[i] = roundf(block_f[i] + 128);
-		//printf("block[i]=%d\n", block[i]);
 	}
 }
 /*
@@ -627,13 +584,11 @@ BmpImage* convertColor(JpegImage* ptr) {
 	for (int c = 0; c < N_COMPONENTS; c++) {
 		sample_distance_h[c] = ptr->Hmax / ptr->subsampling[c][0];
 		sample_distance_v[c] = ptr->Vmax / ptr->subsampling[c][1];
-		printf("h=%d, v=%d\n", sample_distance_h[c], sample_distance_v[c]);
 	}
 	int n_tables[N_COMPONENTS] = {0};
 	// number of tables in a block
 	for (int c = 0; c < N_COMPONENTS; c++)
 		n_tables[c] = ptr->subsampling[c][0] * ptr->subsampling[c][1];
-	printf("Hmax=%d, Vmax=%d\n", ptr->Hmax, ptr->Vmax);
 	for (int i = 0; i < bmp->height; i++) {
 		for (int j = 0; j < bmp->width; j++) {
 			int YCrCb[N_COMPONENTS] = {};
@@ -649,13 +604,11 @@ BmpImage* convertColor(JpegImage* ptr) {
 				int pixel_index = pixel_v * BLOCK_SIDE + pixel_h;
 				YCrCb[c] = ptr->blocks[c][block_index * n_tables[c] + table_index][pixel_index];
 			}
-			//printf("Y:%d, %d, %d\n", YCrCb[0], YCrCb[1], YCrCb[2]);
 			int pixel_index = (bmp->height - i) * bmp->width + j;
 			// order: B, G, R
 			bmp->pixel[pixel_index*N_COMPONENTS] = clip(roundf(YCrCb[0] + 1.772f * (YCrCb[1] - 128)), 0, 255);
 			bmp->pixel[pixel_index*N_COMPONENTS + 1] = clip(roundf(YCrCb[0] - 0.71414f * (YCrCb[2] - 128) - 0.34414f * (YCrCb[1] - 128)), 0, 255);
 			bmp->pixel[pixel_index*N_COMPONENTS + 2] = clip(roundf(YCrCb[0] + 1.402f * (YCrCb[2] - 128)), 0, 255);
-			//printf("RGB=%d,%d,%d\n", bmp->pixel[2][pixel_index], bmp->pixel[1][pixel_index], bmp->pixel[0][pixel_index]);
 		}
 	}
 	return bmp;
@@ -674,32 +627,25 @@ JpegImage* ReadJpeg(FILE* fp) {
 		readBytes(fp, buffer, 2);
 		switch(buffer[1]) {
 			case MarkerAPP0: 
-				//printf("first\n");
 				readAPP0(fp, ImagePtr);
 				break;
 			case MarkerDQT: 
-				//printf("second\n");
 				readDQT(fp, ImagePtr);
 				break;
 			case MarkerSOF: 
-				//printf("third\n");
 				readSOF(fp, ImagePtr);
 				break;
 			case MarkerDHT: 
-				//printf("fourth\n");
 				readDHT(fp, ImagePtr);
 				break;
 			case MarkerDRI: 
-				//printf("fifth\n");
 				readDRI(fp, ImagePtr);
 				break;
 			case MarkerSOS: 
-				//printf("sixth\n");
 				readSOS(fp, ImagePtr);
 				end = readMCU(fp, ImagePtr);
 				break;
 			case MarkerEOI: 
-				//printf("end\n");
 				end = 1;
 				break;
 		}
