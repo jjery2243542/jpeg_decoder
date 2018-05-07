@@ -1,5 +1,5 @@
 CC=g++
-CFLAGS=-O2 -std=c++14 -g
+CFLAGS=-O2 -fopenmp -std=c++14 -g
 
 
 all:

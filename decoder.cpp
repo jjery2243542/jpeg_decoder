@@ -69,7 +69,7 @@ typedef struct BmpImage {
     // order: B, G, R
     unsigned char* pixel;
     int width, height;
-    int pad_width, pad_height;
+    //int pad_width, pad_height;
 } BmpImage;
 
 typedef struct BitReader {
@@ -318,9 +318,11 @@ void writeBMP(BmpImage* ptr, char* output_path) {
 	};
 	int width = ptr->width;
     int height = ptr->height;
-	long file_size = (long)width * (long)height * 3 + 54;
+    int padding = width % 4;
+    //printf("pad=%d\n", padding);
+	long file_size = (long)(width * 3 + padding) * (long)height + 54;
 
-	header[2] = (unsigned char)(file_size &0x000000ff);
+	header[2] = (unsigned char)(file_size & 0x000000ff);
 	header[3] = (file_size >> 8) & 0x000000ff;
 	header[4] = (file_size >> 16) & 0x000000ff;
 	header[5] = (file_size >> 24) & 0x000000ff;
@@ -336,7 +338,13 @@ void writeBMP(BmpImage* ptr, char* output_path) {
 	header[25] = (height >> 24) &0x000000ff;
 
 	fwrite(header, sizeof(unsigned char), 54, fp);
-	fwrite(ptr->pixel, sizeof(unsigned char), (size_t)(long)width * height * 3, fp);
+    unsigned char pad_val = 0;
+    for (int i = height - 1; i >= 0; i--) {
+        for (int j = 0; j < width; j++) {
+            fwrite(ptr->pixel + (i * width + j) * 3, sizeof(unsigned char), (size_t)3, fp);
+        }
+        fwrite(&pad_val, sizeof(unsigned char), (size_t)padding, fp);
+    }
 	fclose(fp);
     return;
 }
@@ -525,29 +533,6 @@ inline void IDCT_block(int* block, float *cos_value) {
 		block[i] = roundf(block_f[i] + 128);
 	}
 }
-/*
-   void IDCT_block(int* block, float cos_table[][BLOCK_SIDE]) {
-   float blockf[BLOCK_SIZE];
-   for (int i = 0; i < BLOCK_SIZE; i++)
-   blockf[i] = (float)block[i];
-   for (int x = 0; x < BLOCK_SIDE; x++) {
-   for (int y = 0; y < BLOCK_SIDE; y++) {
-   float sum = 0;
-   for (int u = 0; u < BLOCK_SIDE; u++) {
-   for (int v = 0; v < BLOCK_SIDE; v++) {
-   float c = ((u == 0) && (v == 0))? 0.5: 1;
-   sum += c * blockf[x * BLOCK_SIDE + y] * cos_table[x][u] * cos_table[y][v];
-   }
-   }
-   blockf[x * BLOCK_SIDE + y] = sum;
-   }
-   }
-   for (int i = 0; i < BLOCK_SIZE; i++) {
-   block[i] = roundf(blockf[i] + 128);
-   printf("block[i]=%d\n", block[i]);
-   }
-   return;
-   }*/
 
 void IDCT(JpegImage* ptr) {
 	// calculate cosine table
@@ -573,10 +558,10 @@ void IDCT(JpegImage* ptr) {
 
 BmpImage* convertColor(JpegImage* ptr) {
 	BmpImage* bmp = new BmpImage;
-	bmp->width = ptr->n_cols_mcu * ptr->Hmax * BLOCK_SIDE;
-	bmp->height = ptr->n_rows_mcu * ptr->Vmax * BLOCK_SIDE;
-	bmp->pad_width = bmp->width - ptr->width;
-	bmp->pad_height = bmp->height - ptr->height;
+	bmp->width = ptr->width; //ptr->n_cols_mcu * ptr->Hmax * BLOCK_SIDE;
+	bmp->height = ptr->height; //ptr->n_rows_mcu * ptr->Vmax * BLOCK_SIDE;
+	//bmp->pad_width = bmp->width - ptr->width;
+	//bmp->pad_height = bmp->height - ptr->height;
 	// allocate pixel memory
     bmp->pixel = new unsigned char [N_COMPONENTS * bmp->width * bmp->height];
 	int sample_distance_h[N_COMPONENTS], sample_distance_v[N_COMPONENTS];
@@ -604,7 +589,7 @@ BmpImage* convertColor(JpegImage* ptr) {
 				int pixel_index = pixel_v * BLOCK_SIDE + pixel_h;
 				YCrCb[c] = ptr->blocks[c][block_index * n_tables[c] + table_index][pixel_index];
 			}
-			int pixel_index = (bmp->height - i) * bmp->width + j;
+			int pixel_index = i * bmp->width + j;
 			// order: B, G, R
 			bmp->pixel[pixel_index*N_COMPONENTS] = clip(roundf(YCrCb[0] + 1.772f * (YCrCb[1] - 128)), 0, 255);
 			bmp->pixel[pixel_index*N_COMPONENTS + 1] = clip(roundf(YCrCb[0] - 0.71414f * (YCrCb[2] - 128) - 0.34414f * (YCrCb[1] - 128)), 0, 255);
